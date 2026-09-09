@@ -22,6 +22,7 @@
   #panel { max-width:360px; }
   h1 { margin:0 0 8px; font-size:34px; letter-spacing:1px; }
   p { margin:8px 0 18px; line-height:1.5; opacity:.9; }
+  #soundBtn{padding:6px 9px;border-radius:10px;font-size:18px;line-height:1;background:rgba(255,255,255,.08);color:#fff;box-shadow:none}
   button {
     border:0; border-radius:14px; padding:14px 22px; font-size:18px; font-weight:800;
     color:#07110b; background:var(--accent); box-shadow:0 8px 24px rgba(98,255,143,.25);
@@ -46,14 +47,14 @@
   <div id="hud">
     <div>SCORE <span id="score">0</span></div>
     <div>LEVEL <span id="level">1</span></div>
-    <div>LIFE <span id="life">3</span></div>
+    <div>LIFE <span id="life">3</span></div><button id="soundBtn" aria-label="sound">🔊</button>
   </div>
   <div id="gameArea">
     <canvas id="c"></canvas>
     <div id="overlay">
       <div id="panel">
         <h1>INVADER</h1>
-        <p>左右ボタンで移動、FIREで射撃。<br>激しく動くインベーダーとUFOを撃破せよ！<br>敵弾に当たるとLIFEが1減り、0でGAME OVER。</p>
+        <p>左右ボタンで移動、FIREで射撃。<br>3拍子で迫るインベーダーとUFOを撃破せよ！<br>500点で盆踊り射撃、1000点で巨大イカ神輿！</p>
         <button id="startBtn">START</button>
       </div>
     </div>
@@ -78,14 +79,87 @@
   const leftBtn = document.getElementById('left');
   const rightBtn = document.getElementById('right');
   const fireBtn = document.getElementById('fire');
+  const soundBtn = document.getElementById('soundBtn');
 
   let W=0,H=0,dpr=1,last=0,running=false;
   let left=false,right=false,fire=false,fireCooldown=0;
   let score=0,level=1,lives=3;
   let player, bullets=[], enemyBullets=[], invaders=[], stars=[];
   let ufo=null, ufoTimer=5;
-  let invulnerable=0, respawnTimer=0;
+  let bonusDanceActive=false, bonusDanceTimer=0, nextDanceScore=500, danceSquids=[];
+  let giantSquidActive=false, giantSquidTimer=0, giantSquidHP=0, giantSquid=null, bonusHits=0;
   let swarmDir=1, swarmSpeed=26, shootTimer=0;
+  let invaderStepTimer=0, invaderStepInterval=.34;
+
+
+  let audioCtx=null, masterGain=null, soundOn=true, stepBeat=0, ufoOsc=null, ufoGain=null;
+
+  function initAudio(){
+    if(audioCtx){ if(audioCtx.state==='suspended') audioCtx.resume(); return; }
+    const AC=window.AudioContext||window.webkitAudioContext;
+    if(!AC) return;
+    audioCtx=new AC();
+    masterGain=audioCtx.createGain();
+    masterGain.gain.value=.24;
+    masterGain.connect(audioCtx.destination);
+  }
+  function tone(freq,duration,type='square',volume=.12,slideTo=null){
+    if(!soundOn) return;
+    initAudio();
+    if(!audioCtx) return;
+    const now=audioCtx.currentTime, o=audioCtx.createOscillator(), g=audioCtx.createGain();
+    o.type=type; o.frequency.setValueAtTime(freq,now);
+    if(slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(20,slideTo),now+duration);
+    g.gain.setValueAtTime(volume,now);
+    g.gain.exponentialRampToValueAtTime(.0001,now+duration);
+    o.connect(g); g.connect(masterGain); o.start(now); o.stop(now+duration+.02);
+  }
+  function noise(duration=.12,volume=.08){
+    if(!soundOn) return;
+    initAudio(); if(!audioCtx) return;
+    const sr=audioCtx.sampleRate, b=audioCtx.createBuffer(1,Math.floor(sr*duration),sr), d=b.getChannelData(0);
+    for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*(1-i/d.length);
+    const s=audioCtx.createBufferSource(), g=audioCtx.createGain();
+    g.gain.value=volume; s.buffer=b; s.connect(g); g.connect(masterGain); s.start();
+  }
+  function sfxShoot(){ tone(760,.055,'square',.13,300); }
+  function sfxHit(){ tone(190,.085,'sawtooth',.15,70); noise(.07,.05); }
+  function sfxPlayerHit(){ tone(120,.24,'sawtooth',.18,45); noise(.22,.11); }
+  function sfxUfoHit(){ tone(520,.08,'square',.14,180); setTimeout(()=>tone(820,.11,'square',.12,260),55); }
+  function sfxLevel(){ tone(440,.08); setTimeout(()=>tone(660,.08),90); setTimeout(()=>tone(880,.13),180); }
+  function sfxInvaderStep(){
+    const notes=[92,78,66];
+    tone(notes[stepBeat%3],.055,'square',.095);
+    stepBeat=(stepBeat+1)%3;
+  }
+
+  function sfxBonOdori(){
+    const seq=[330,392,440,392,330,294,330,392];
+    seq.forEach((f,i)=>setTimeout(()=>tone(f,.11,'square',.09),i*125));
+  }
+
+  function sfxGiantSquid(){
+    const seq=[110,147,196,147,110,98,110,147];
+    seq.forEach((f,i)=>setTimeout(()=>tone(f,.14,i%2?'square':'sawtooth',.10),i*120));
+  }
+  function sfxBonusHit(){ tone(620,.045,'square',.10,880); }
+  function sfxGiantHit(){ tone(150,.06,'sawtooth',.13,90); }
+  function sfxGiantDown(){
+    [392,523,659,784].forEach((f,i)=>setTimeout(()=>tone(f,.11,'square',.12),i*80));
+  }
+
+  function startUfoHum(){
+    if(!soundOn) return;
+    initAudio(); if(!audioCtx||ufoOsc) return;
+    ufoOsc=audioCtx.createOscillator(); ufoGain=audioCtx.createGain();
+    ufoOsc.type='sawtooth'; ufoOsc.frequency.value=155; ufoGain.gain.value=.025;
+    ufoOsc.connect(ufoGain); ufoGain.connect(masterGain); ufoOsc.start();
+  }
+  function stopUfoHum(){
+    if(!ufoOsc) return;
+    try{ufoOsc.stop();}catch(e){}
+    ufoOsc=null; ufoGain=null;
+  }
 
   function resize(){
     const r=canvas.getBoundingClientRect();
@@ -105,7 +179,7 @@
   }
 
   function init(){
-    score=0; level=1; lives=3; bullets=[]; enemyBullets=[]; ufo=null; ufoTimer=4; invulnerable=0; respawnTimer=0;
+    score=0; level=1; lives=3; bullets=[]; enemyBullets=[]; ufo=null; ufoTimer=4; bonusDanceActive=false; bonusDanceTimer=0; nextDanceScore=500; danceSquids=[]; giantSquidActive=false; giantSquidTimer=0; giantSquidHP=0; giantSquid=null; bonusHits=0;
     player={x:W/2-18,y:H-42,w:36,h:22,speed:260};
     updateHUD();
     buildLevel();
@@ -113,7 +187,7 @@
 
   function buildLevel(){
     bullets=[]; enemyBullets=[]; invaders=[];
-    swarmDir=1; swarmSpeed=42+level*10; shootTimer=.6;
+    swarmDir=1; swarmSpeed=42+level*10; shootTimer=.6; invaderStepTimer=0; stepBeat=0; invaderStepInterval=Math.max(.105,.34-level*.018);
     const cols=Math.min(9,6+Math.floor(level/2));
     const rows=Math.min(6,3+Math.floor(level/3));
     const gap=8, iw=30, ih=22;
@@ -139,6 +213,7 @@
   function shoot(){
     if(fireCooldown<=0 && bullets.length<3){
       bullets.push({x:player.x+player.w/2-2,y:player.y-10,w:4,h:12,vy:-430});
+      sfxShoot();
       fireCooldown=.18;
     }
   }
@@ -150,7 +225,59 @@
     enemyBullets.push({x:shooter.x+shooter.w/2-2,y:shooter.y+shooter.h,w:4,h:10,vy:170+level*12});
   }
 
-  function update(dt){
+
+  function checkBonusEvent(){
+    if(bonusDanceActive || giantSquidActive) return;
+    while(score>=nextDanceScore){
+      const threshold=nextDanceScore;
+      nextDanceScore+=500;
+      if(threshold%1000===0){
+        startGiantSquidDance();
+      }else{
+        startBonusDance();
+      }
+      break;
+    }
+  }
+
+  function startBonusDance(){
+    if(bonusDanceActive || giantSquidActive) return;
+    bonusDanceActive=true;
+    bonusDanceTimer=5.0;
+    bonusHits=0;
+    enemyBullets=[];
+    bullets=[];
+    danceSquids=[];
+    const count=7;
+    for(let i=0;i<count;i++){
+      danceSquids.push({
+        x: W*(i+1)/(count+1),
+        y: H*.28 + (i%2)*42,
+        phase:i*.7,
+        size:23 + (i%3)*3,
+        alive:true
+      });
+    }
+    sfxBonOdori();
+    if(navigator.vibrate) navigator.vibrate([20,40,20,40,20]);
+  }
+
+  function startGiantSquidDance(){
+    if(bonusDanceActive || giantSquidActive) return;
+    giantSquidActive=true;
+    giantSquidTimer=7.0;
+    giantSquidHP=12;
+    bonusHits=0;
+    enemyBullets=[];
+    bullets=[];
+    giantSquid={x:W/2-55,y:H*.19,w:110,h:82,phase:0,flash:0};
+    sfxGiantSquid();
+    if(navigator.vibrate) navigator.vibrate([40,40,40,40,80]);
+  }
+
+  function updateBonusGame(dt){
+    if(!(bonusDanceActive || giantSquidActive)) return false;
+
     fireCooldown-=dt;
     if(left) player.x-=player.speed*dt;
     if(right) player.x+=player.speed*dt;
@@ -158,150 +285,36 @@
     if(fire) shoot();
 
     bullets.forEach(b=>b.y+=b.vy*dt);
-    enemyBullets.forEach(b=>b.y+=b.vy*dt);
-    bullets=bullets.filter(b=>b.y+b.h>0);
-    enemyBullets=enemyBullets.filter(b=>b.y<H+20);
+    bullets=bullets.filter(b=>b.y+b.h>0 && b.y>-100);
 
-    let minX=Infinity,maxX=-Infinity;
-    invaders.filter(i=>i.alive).forEach(i=>{minX=Math.min(minX,i.x);maxX=Math.max(maxX,i.x+i.w);});
-    let drop=false;
-    if(minX!==Infinity){
-      if((swarmDir>0 && maxX+swarmSpeed*dt>W-6) || (swarmDir<0 && minX-swarmSpeed*dt<6)){
-        swarmDir*=-1; drop=true;
-      }
-      invaders.forEach(i=>{
-        if(!i.alive) return;
-        if(drop) i.y+=20;
-        else {
-          const wobble = Math.sin((performance.now()/180) + i.row*0.9 + i.x*0.03) * 10;
-          i.x += swarmDir*(swarmSpeed + wobble)*dt;
-          i.y += Math.sin((performance.now()/260) + i.x*0.02) * 3 * dt;
-        }
-      });
-    }
-
-    bullets.forEach(b=>{
-      invaders.forEach(i=>{
-        if(i.alive && rectHit(b,i)){
-          i.alive=false; b.y=-999; score+=10*(i.row+1); updateHUD();
-          if(navigator.vibrate) navigator.vibrate(10);
-        }
-      });
-    });
-    bullets=bullets.filter(b=>b.y>-100);
-
-    invulnerable = Math.max(0, invulnerable-dt);
-    respawnTimer = Math.max(0, respawnTimer-dt);
-
-    enemyBullets.forEach(b=>{
-      if(invulnerable<=0 && respawnTimer<=0 && rectHit(b,player)){
-        b.y=H+999;
-        lives--;
-        updateHUD();
-        if(navigator.vibrate) navigator.vibrate([50,40,80]);
-
-        if(lives<=0){
-          gameOver();
-          return;
-        }
-
-        // 被弾したら中央へ戻して短時間だけ無敵。
-        player.x=W/2-player.w/2;
-        enemyBullets=[];
-        respawnTimer=.45;
-        invulnerable=1.35;
-      }
-    });
-
-    if(!running) return;
-    if(invaders.some(i=>i.alive && i.y+i.h>=player.y-4)) return gameOver();
-
-    if(!invaders.some(i=>i.alive)){
-      level++; updateHUD(); buildLevel();
-    }
-
-    // UFO
-    ufoTimer -= dt;
-    if(!ufo && ufoTimer <= 0){
-      const fromLeft = Math.random() < .5;
-      ufo = {
-        x: fromLeft ? -48 : W+48,
-        y: 8 + Math.random()*18,
-        w: 44, h: 18,
-        vx: (fromLeft ? 1 : -1) * (120 + level*8 + Math.random()*50)
-      };
-      ufoTimer = 9 + Math.random()*9;
-    }
-    if(ufo){
-      ufo.x += ufo.vx*dt;
-      if(ufo.x < -70 || ufo.x > W+70) ufo = null;
-    }
-
-    bullets.forEach(b=>{
-      if(ufo && rectHit(b,ufo)){
-        score += 150 + level*25;
-        b.y = -999;
-        ufo = null;
-        ufoTimer = 7 + Math.random()*8;
-        updateHUD();
-        if(navigator.vibrate) navigator.vibrate([20,20,20]);
-      }
-    });
-
-    shootTimer-=dt;
-    if(shootTimer<=0){
-      enemyShoot();
-      shootTimer=Math.max(.18,.82-level*.05)+Math.random()*.42;
-    }
-  }
-
-  function draw(){
-    ctx.clearRect(0,0,W,H);
-    ctx.fillStyle='rgba(255,255,255,.8)';
-    for(const s of stars) ctx.fillRect(s.x,s.y,s.s,s.s);
-
-    // player（被弾後は点滅）
-    const showPlayer = invulnerable<=0 || Math.floor(invulnerable*12)%2===0;
-    if(showPlayer){
-      ctx.fillStyle='#62ff8f';
-      ctx.fillRect(player.x+10,player.y,16,6);
-      ctx.fillRect(player.x+4,player.y+6,28,8);
-      ctx.fillRect(player.x,player.y+14,36,8);
-    }
-
-    // bullets
-    ctx.fillStyle='#f8ff74';
-    bullets.forEach(b=>ctx.fillRect(b.x,b.y,b.w,b.h));
-    ctx.fillStyle='#ff6b78';
-    enemyBullets.forEach(b=>ctx.fillRect(b.x,b.y,b.w,b.h));
-
-    // UFO
-    if(ufo){
-      ctx.fillStyle='#ff4fd8';
-      ctx.fillRect(ufo.x+10,ufo.y,ufo.w-20,4);
-      ctx.fillRect(ufo.x+4,ufo.y+4,ufo.w-8,6);
-      ctx.fillRect(ufo.x,ufo.y+10,ufo.w,5);
+    if(bonusDanceActive){
+      ctx.fillStyle='rgba(0,0,0,.42)';
+      ctx.fillRect(0,0,W,H);
+      ctx.textAlign='center';
       ctx.fillStyle='#fff';
-      ctx.fillRect(ufo.x+10,ufo.y+7,5,3);
-      ctx.fillRect(ufo.x+ufo.w-15,ufo.y+7,5,3);
+      ctx.font='900 24px -apple-system,BlinkMacSystemFont,sans-serif';
+      ctx.fillText('BONUS! イカの盆踊り',W/2,H*.12);
+      ctx.font='700 15px -apple-system,BlinkMacSystemFont,sans-serif';
+      ctx.fillText('踊るイカを撃て！ 1匹 +25点',W/2,H*.17);
+      ctx.fillText('HIT '+bonusHits+'   残り '+Math.max(0,bonusDanceTimer).toFixed(1)+'秒',W/2,H*.21);
+      danceSquids.forEach(q=>{ if(q.alive) drawSquid(q.x,q.y,q.size,q.phase); });
+      ctx.textAlign='start';
     }
 
-    // invaders
-    invaders.forEach(i=>{
-      if(!i.alive) return;
-      ctx.fillStyle = i.row%3===0 ? '#9b8cff' : i.row%3===1 ? '#58d7ff' : '#ff9b54';
-      const x=i.x,y=i.y,w=i.w,h=i.h;
-      ctx.fillRect(x+6,y,w-12,4);
-      ctx.fillRect(x+2,y+4,w-4,12);
-      ctx.fillRect(x,y+8,4,8);
-      ctx.fillRect(x+w-4,y+8,4,8);
-      ctx.fillStyle='#05070d';
-      ctx.fillRect(x+8,y+8,4,4);
-      ctx.fillRect(x+w-12,y+8,4,4);
+    if(giantSquidActive && giantSquid){
+      ctx.fillStyle='rgba(0,0,0,.48)';
+      ctx.fillRect(0,0,W,H);
+      ctx.textAlign='center';
       ctx.fillStyle='#fff';
-      ctx.fillRect(x+4,y+h-4,6,4);
-      ctx.fillRect(x+w-10,y+h-4,6,4);
-    });
+      ctx.font='900 23px -apple-system,BlinkMacSystemFont,sans-serif';
+      ctx.fillText('1000点祭！ 巨大イカ神輿',W/2,H*.08);
+      ctx.font='700 15px -apple-system,BlinkMacSystemFont,sans-serif';
+      ctx.fillText('上下に踊る巨大イカを撃て！',W/2,H*.12);
+      ctx.fillText('HP '+Math.max(0,giantSquidHP)+'/12   HIT '+bonusHits+'   '+Math.max(0,giantSquidTimer).toFixed(1)+'秒',W/2,H*.16);
+      drawGiantSquid(giantSquid);
+      ctx.textAlign='start';
+    }
+
   }
 
   function loop(t){
@@ -312,15 +325,16 @@
   }
 
   function start(){
+    initAudio(); if(audioCtx&&audioCtx.state==='suspended') audioCtx.resume();
     init(); overlay.classList.add('hidden'); running=true; last=performance.now(); requestAnimationFrame(loop);
   }
 
   function gameOver(){
-    running=false;
+    running=false; stopUfoHum();
     panel.innerHTML=`<h1>GAME OVER</h1><p>SCORE ${score}<br>LEVEL ${level}</p><button id="retry">RETRY</button>`;
     overlay.classList.remove('hidden');
     document.getElementById('retry').onclick=()=>{
-      panel.innerHTML='<h1>INVADER</h1><p>左右ボタンで移動、FIREで射撃。<br>激しく動くインベーダーとUFOを撃破せよ！<br>敵弾に当たるとLIFEが1減り、0でGAME OVER。</p><button id="startBtn2">START</button>';
+      panel.innerHTML='<h1>INVADER</h1><p>左右ボタンで移動、FIREで射撃。<br>3拍子で迫るインベーダーとUFOを撃破せよ！<br>500点で盆踊り射撃、1000点で巨大イカ神輿！</p><button id="startBtn2">START</button>';
       document.getElementById('startBtn2').onclick=start;
       start();
     };
@@ -349,6 +363,10 @@
     if(e.key===' ') fire=false;
   });
 
+  soundBtn.onclick=()=>{
+    initAudio(); soundOn=!soundOn; soundBtn.textContent=soundOn?'🔊':'🔇';
+    if(!soundOn) stopUfoHum(); else if(ufo) startUfoHum();
+  };
   startBtn.onclick=start;
   draw = draw.bind(null);
 })();

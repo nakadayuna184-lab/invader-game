@@ -53,7 +53,7 @@
     <canvas id="c"></canvas>
     <div id="overlay">
       <div id="panel">
-        <h1>INVADER</h1>
+        <h1>INVADER <small style="font-size:12px;opacity:.65">v6</small></h1>
         <p>左右ボタンで移動、FIREで射撃。<br>3拍子で迫るインベーダーとUFOを撃破せよ！<br>500点で盆踊り射撃、1000点で巨大イカ神輿！</p>
         <button id="startBtn">START</button>
       </div>
@@ -95,13 +95,24 @@
   let audioCtx=null, masterGain=null, soundOn=true, stepBeat=0, ufoOsc=null, ufoGain=null;
 
   function initAudio(){
-    if(audioCtx){ if(audioCtx.state==='suspended') audioCtx.resume(); return; }
-    const AC=window.AudioContext||window.webkitAudioContext;
-    if(!AC) return;
-    audioCtx=new AC();
-    masterGain=audioCtx.createGain();
-    masterGain.gain.value=.24;
-    masterGain.connect(audioCtx.destination);
+    try{
+      if(audioCtx){
+        if(audioCtx.state==='suspended'){
+          const r=audioCtx.resume();
+          if(r && r.catch) r.catch(()=>{});
+        }
+        return;
+      }
+      const AC=window.AudioContext||window.webkitAudioContext;
+      if(!AC) return;
+      audioCtx=new AC();
+      masterGain=audioCtx.createGain();
+      masterGain.gain.value=.24;
+      masterGain.connect(audioCtx.destination);
+    }catch(e){
+      audioCtx=null;
+      masterGain=null;
+    }
   }
   function tone(freq,duration,type='square',volume=.12,slideTo=null){
     if(!soundOn) return;
@@ -606,9 +617,14 @@
     requestAnimationFrame(loop);
   }
 
-  function start(){
-    initAudio(); if(audioCtx&&audioCtx.state==='suspended') audioCtx.resume();
-    init(); overlay.classList.add('hidden'); running=true; last=performance.now(); requestAnimationFrame(loop);
+  function start(e){
+    if(e && e.preventDefault) e.preventDefault();
+    try{ initAudio(); }catch(err){}
+    init();
+    overlay.classList.add('hidden');
+    running=true;
+    last=performance.now();
+    requestAnimationFrame(loop);
   }
 
   function gameOver(){
@@ -622,13 +638,23 @@
     };
   }
 
-  function bindHold(el, setter){
-    const on=e=>{e.preventDefault(); setter(true);};
-    const off=e=>{e.preventDefault(); setter(false);};
-    el.addEventListener('pointerdown',on);
-    el.addEventListener('pointerup',off);
-    el.addEventListener('pointercancel',off);
-    el.addEventListener('pointerleave',off);
+  function bindHold(el,setter){
+    const on=e=>{ if(e && e.cancelable) e.preventDefault(); setter(true); try{initAudio();}catch(err){} };
+    const off=e=>{ if(e && e.cancelable) e.preventDefault(); setter(false); };
+
+    if(window.PointerEvent){
+      el.addEventListener('pointerdown',on,{passive:false});
+      el.addEventListener('pointerup',off,{passive:false});
+      el.addEventListener('pointercancel',off,{passive:false});
+      el.addEventListener('pointerleave',off,{passive:false});
+    }else{
+      el.addEventListener('touchstart',on,{passive:false});
+      el.addEventListener('touchend',off,{passive:false});
+      el.addEventListener('touchcancel',off,{passive:false});
+      el.addEventListener('mousedown',on);
+      el.addEventListener('mouseup',off);
+      el.addEventListener('mouseleave',off);
+    }
   }
   bindHold(leftBtn,v=>left=v);
   bindHold(rightBtn,v=>right=v);
@@ -650,12 +676,16 @@
     if(!soundOn) stopUfoHum(); else if(ufo) startUfoHum();
   };
   startBtn.onclick=start;
+  startBtn.addEventListener('touchend',start,{passive:false});
   draw = draw.bind(null);
 })();
 </script>
 <script>
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+/* v6: service worker intentionally disabled to avoid stale iPhone Safari cache. */
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.getRegistrations().then(rs=>rs.forEach(r=>r.unregister())).catch(()=>{});
+  });
 }
 </script>
 </body>

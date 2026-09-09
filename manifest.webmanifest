@@ -1,0 +1,9 @@
+{
+  "name": "iPhone Invader",
+  "short_name": "Invader",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#05070d",
+  "theme_color": "#05070d",
+  "orientation": "portrait-primary"
+}

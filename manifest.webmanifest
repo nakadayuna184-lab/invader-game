@@ -1,7 +1,7 @@
 {
-  "name": "iPhone Invader v6",
+  "name": "iPhone Invader v7",
   "short_name": "Invader",
-  "start_url": "./?v=6",
+  "start_url": "./?v=7",
   "display": "standalone",
   "background_color": "#05070d",
   "theme_color": "#05070d",

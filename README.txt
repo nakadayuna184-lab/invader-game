@@ -1,18 +1,17 @@
-iPhone Invader v6 Safari FIX
+iPhone Invader v7 Safari Zoom Fix
 
-Safari対策:
-・START処理から音声初期化の失敗を切り離しました
-・touchend にもSTARTを直接登録
-・操作ボタンを PointerEvent / TouchEvent 両対応
-・古いService Workerとキャッシュを解除
-・タイトル横に v6 と表示されれば最新版です
+修正内容:
+・FIRE/打撃ボタン連打時にSafariが画面を拡大する問題を修正
+・ダブルタップズームを抑止
+・ピンチ/gesture系の拡大をゲーム画面で抑止
+・長押し時の選択やコールアウトを抑止
+・v6のゲーム内容は維持
 
-ゲーム内容:
-・3拍子インベーダー + 効果音
-・UFO
-・500点系: イカの盆踊り射撃
-・1000点系: 巨大イカ神輿
+GitHub Pages更新:
+index.html
+manifest.webmanifest
+sw.js
+の3ファイルを上書きしてください。
 
-GitHub Pages:
-3ファイルをすべて上書きしてください。
-更新後、SafariでURL末尾に ?v=6 を付けて一度開くと旧キャッシュを避けやすくなります。
+更新後はURL末尾に ?v=7 を付けて開いてください。
+タイトル横に v7 と表示されれば最新版です。

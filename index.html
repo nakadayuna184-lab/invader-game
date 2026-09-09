@@ -144,9 +144,7 @@
   }
   function sfxBonusHit(){ tone(620,.045,'square',.10,880); }
   function sfxGiantHit(){ tone(150,.06,'sawtooth',.13,90); }
-  function sfxGiantDown(){
-    [392,523,659,784].forEach((f,i)=>setTimeout(()=>tone(f,.11,'square',.12),i*80));
-  }
+  function sfxGiantDown(){ [392,523,659,784].forEach((f,i)=>setTimeout(()=>tone(f,.11,'square',.12),i*80)); }
 
   function startUfoHum(){
     if(!soundOn) return;
@@ -228,16 +226,13 @@
 
   function checkBonusEvent(){
     if(bonusDanceActive || giantSquidActive) return;
-    while(score>=nextDanceScore){
-      const threshold=nextDanceScore;
-      nextDanceScore+=500;
-      if(threshold%1000===0){
-        startGiantSquidDance();
-      }else{
-        startBonusDance();
-      }
-      break;
-    }
+    if(score < nextDanceScore) return;
+
+    const threshold = nextDanceScore;
+    nextDanceScore += 500;
+
+    if(threshold % 1000 === 0) startGiantSquidDance();
+    else startBonusDance();
   }
 
   function startBonusDance(){
@@ -245,17 +240,18 @@
     bonusDanceActive=true;
     bonusDanceTimer=5.0;
     bonusHits=0;
-    enemyBullets=[];
     bullets=[];
+    enemyBullets=[];
     danceSquids=[];
     const count=7;
     for(let i=0;i<count;i++){
       danceSquids.push({
-        x: W*(i+1)/(count+1),
-        y: H*.28 + (i%2)*42,
+        x:W*(i+1)/(count+1),
+        y:H*.28+(i%2)*42,
         phase:i*.7,
-        size:23 + (i%3)*3,
-        alive:true
+        size:23+(i%3)*3,
+        alive:true,
+        respawn:0
       });
     }
     sfxBonOdori();
@@ -268,9 +264,9 @@
     giantSquidTimer=7.0;
     giantSquidHP=12;
     bonusHits=0;
-    enemyBullets=[];
     bullets=[];
-    giantSquid={x:W/2-55,y:H*.19,w:110,h:82,phase:0,flash:0};
+    enemyBullets=[];
+    giantSquid={x:W/2-55,y:H*.18,w:110,h:82,phase:0,flash:0};
     sfxGiantSquid();
     if(navigator.vibrate) navigator.vibrate([40,40,40,40,80]);
   }
@@ -288,6 +284,292 @@
     bullets=bullets.filter(b=>b.y+b.h>0 && b.y>-100);
 
     if(bonusDanceActive){
+      bonusDanceTimer-=dt;
+
+      danceSquids.forEach(q=>{
+        if(!q.alive){
+          q.respawn-=dt;
+          if(q.respawn<=0){
+            q.x=35+Math.random()*(W-70);
+            q.y=H*.22+Math.random()*H*.28;
+            q.phase=Math.random()*6.28;
+            q.alive=true;
+          }
+        }
+      });
+
+      bullets.forEach(b=>{
+        danceSquids.forEach(q=>{
+          if(!q.alive) return;
+          const t=performance.now()/180+q.phase;
+          const target={
+            x:q.x+Math.sin(t)*6-q.size*.42,
+            y:q.y+Math.cos(t*1.25)*4-q.size*.38,
+            w:q.size*.84,
+            h:q.size*.80
+          };
+          if(rectHit(b,target)){
+            b.y=-999;
+            q.alive=false;
+            q.respawn=.18;
+            bonusHits++;
+            score+=25;
+            updateHUD();
+            sfxBonusHit();
+            if(navigator.vibrate) navigator.vibrate(8);
+          }
+        });
+      });
+
+      bullets=bullets.filter(b=>b.y>-100);
+
+      if(bonusDanceTimer<=0){
+        bonusDanceActive=false;
+        danceSquids=[];
+        bullets=[];
+        score+=100;
+        updateHUD();
+        checkBonusEvent();
+      }
+      return true;
+    }
+
+    giantSquidTimer-=dt;
+    if(giantSquid){
+      giantSquid.phase+=dt*5;
+      giantSquid.flash=Math.max(0,giantSquid.flash-dt);
+      giantSquid.x=W/2-giantSquid.w/2+Math.sin(giantSquid.phase*.7)*36;
+      giantSquid.y=H*.16+Math.abs(Math.sin(giantSquid.phase))*38;
+
+      bullets.forEach(b=>{
+        if(giantSquid && rectHit(b,giantSquid)){
+          b.y=-999;
+          giantSquidHP--;
+          bonusHits++;
+          score+=20;
+          giantSquid.flash=.10;
+          updateHUD();
+          sfxGiantHit();
+          if(navigator.vibrate) navigator.vibrate(12);
+
+          if(giantSquidHP<=0){
+            score+=300;
+            updateHUD();
+            sfxGiantDown();
+            giantSquidActive=false;
+            giantSquid=null;
+            bullets=[];
+            checkBonusEvent();
+          }
+        }
+      });
+    }
+
+    bullets=bullets.filter(b=>b.y>-100);
+
+    if(giantSquidActive && giantSquidTimer<=0){
+      giantSquidActive=false;
+      giantSquid=null;
+      bullets=[];
+      score+=100;
+      updateHUD();
+      checkBonusEvent();
+    }
+    return true;
+  }
+
+  function drawSquid(x,y,s,phase){
+    const t=performance.now()/180+phase;
+    const sway=Math.sin(t)*6;
+    const bob=Math.cos(t*1.25)*4;
+    ctx.save();
+    ctx.translate(x+sway,y+bob);
+    ctx.rotate(Math.sin(t)*0.18);
+    ctx.fillStyle='#ffd966';
+    ctx.fillRect(-s*.32,-s*.38,s*.64,s*.42);
+    ctx.fillRect(-s*.42,-s*.12,s*.84,s*.34);
+    ctx.fillStyle='#05070d';
+    ctx.fillRect(-s*.18,-s*.18,s*.1,s*.1);
+    ctx.fillRect(s*.08,-s*.18,s*.1,s*.1);
+    ctx.fillStyle='#ffd966';
+    // 盆踊りっぽい左右の腕
+    const arm=Math.sin(t*1.4)*8;
+    ctx.fillRect(-s*.58,-s*.06+arm*.15,s*.18,s*.12);
+    ctx.fillRect(s*.40,-s*.06-arm*.15,s*.18,s*.12);
+    // 足
+    ctx.fillRect(-s*.28,s*.20,s*.12,s*.22);
+    ctx.fillRect(-s*.05,s*.20,s*.12,s*.25);
+    ctx.fillRect(s*.18,s*.20,s*.12,s*.22);
+    ctx.restore();
+  }
+
+
+  function drawGiantSquid(g){
+    const t=performance.now()/180;
+    const s=g.w;
+    ctx.save();
+    ctx.translate(g.x+g.w/2,g.y+g.h/2);
+    ctx.rotate(Math.sin(t*.8)*.08);
+    ctx.fillStyle=g.flash>0?'#ffffff':'#ffb347';
+    ctx.fillRect(-s*.28,-s*.30,s*.56,s*.27);
+    ctx.fillRect(-s*.38,-s*.06,s*.76,s*.30);
+    ctx.fillRect(-s*.48,s*.17,s*.96,s*.10);
+    ctx.fillStyle='#05070d';
+    ctx.fillRect(-s*.17,-s*.11,s*.08,s*.08);
+    ctx.fillRect(s*.09,-s*.11,s*.08,s*.08);
+    ctx.fillStyle=g.flash>0?'#ffffff':'#ffb347';
+    const arm=Math.sin(t*1.5)*13;
+    ctx.fillRect(-s*.60,-s*.02+arm*.18,s*.20,s*.11);
+    ctx.fillRect(s*.40,-s*.02-arm*.18,s*.20,s*.11);
+    for(let i=-3;i<=3;i++){
+      const yy=s*.28+Math.sin(t*1.4+i)*5;
+      ctx.fillRect(i*s*.075-s*.035,yy,s*.07,s*.24+(i%2?8:0));
+    }
+    ctx.fillStyle='#ffe08a';
+    ctx.fillRect(-s*.68,s*.33,s*1.36,s*.06);
+    ctx.restore();
+  }
+
+  function update(dt){
+    if(updateBonusGame(dt)) return;
+    fireCooldown-=dt;
+    if(left) player.x-=player.speed*dt;
+    if(right) player.x+=player.speed*dt;
+    player.x=Math.max(4,Math.min(W-player.w-4,player.x));
+    if(fire) shoot();
+
+    bullets.forEach(b=>b.y+=b.vy*dt);
+    enemyBullets.forEach(b=>b.y+=b.vy*dt);
+    bullets=bullets.filter(b=>b.y+b.h>0);
+    enemyBullets=enemyBullets.filter(b=>b.y<H+20);
+
+    // 3拍子でデッ・デッ・デッと刻むステップ移動
+    invaderStepTimer-=dt;
+    if(invaderStepTimer<=0){
+      const aliveNow=invaders.filter(i=>i.alive);
+      if(aliveNow.length){
+        let minX=Infinity,maxX=-Infinity;
+        aliveNow.forEach(i=>{minX=Math.min(minX,i.x);maxX=Math.max(maxX,i.x+i.w);});
+        const stepPx=Math.min(18,7+level*.65+(1-aliveNow.length/invaders.length)*5);
+        let drop=false;
+        if((swarmDir>0 && maxX+stepPx>W-6) || (swarmDir<0 && minX-stepPx<6)){swarmDir*=-1;drop=true;}
+        aliveNow.forEach(i=>{if(drop)i.y+=18;else i.x+=swarmDir*stepPx;});
+        sfxInvaderStep();
+        const ratio=aliveNow.length/Math.max(1,invaders.length);
+        invaderStepInterval=Math.max(.085,(.34-level*.016)*(.48+ratio*.52));
+      }
+      invaderStepTimer=invaderStepInterval;
+    }
+
+    bullets.forEach(b=>{
+      invaders.forEach(i=>{
+        if(i.alive && rectHit(b,i)){
+          i.alive=false; b.y=-999; score+=10*(i.row+1); updateHUD(); sfxHit();
+          checkBonusEvent();
+          if(navigator.vibrate) navigator.vibrate(10);
+        }
+      });
+    });
+    bullets=bullets.filter(b=>b.y>-100);
+
+    enemyBullets.forEach(b=>{
+      if(rectHit(b,player)){
+        b.y=H+999; lives--; updateHUD(); sfxPlayerHit();
+        if(navigator.vibrate) navigator.vibrate([30,40,30]);
+        if(lives<=0) return gameOver();
+      }
+    });
+
+    if(invaders.some(i=>i.alive && i.y+i.h>=player.y-4)) return gameOver();
+
+    if(!invaders.some(i=>i.alive)){
+      level++; updateHUD(); sfxLevel(); buildLevel();
+    }
+
+    // UFO
+    ufoTimer -= dt;
+    if(!ufo && ufoTimer <= 0){
+      const fromLeft = Math.random() < .5;
+      ufo = {
+        x: fromLeft ? -48 : W+48,
+        y: 8 + Math.random()*18,
+        w: 44, h: 18,
+        vx: (fromLeft ? 1 : -1) * (120 + level*8 + Math.random()*50)
+      };
+      ufoTimer = 9 + Math.random()*9;
+      startUfoHum();
+    }
+    if(ufo){
+      ufo.x += ufo.vx*dt;
+      if(ufo.x < -70 || ufo.x > W+70){ufo=null;stopUfoHum();}
+    }
+
+    bullets.forEach(b=>{
+      if(ufo && rectHit(b,ufo)){
+        score += 150 + level*25;
+        checkBonusEvent();
+        b.y = -999;
+        ufo = null;
+        stopUfoHum(); sfxUfoHit();
+        ufoTimer = 7 + Math.random()*8;
+        updateHUD();
+        if(navigator.vibrate) navigator.vibrate([20,20,20]);
+      }
+    });
+
+    shootTimer-=dt;
+    if(shootTimer<=0){
+      enemyShoot();
+      shootTimer=Math.max(.18,.82-level*.05)+Math.random()*.42;
+    }
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='rgba(255,255,255,.8)';
+    for(const s of stars) ctx.fillRect(s.x,s.y,s.s,s.s);
+
+    // player
+    ctx.fillStyle='#62ff8f';
+    ctx.fillRect(player.x+10,player.y,16,6);
+    ctx.fillRect(player.x+4,player.y+6,28,8);
+    ctx.fillRect(player.x,player.y+14,36,8);
+
+    // bullets
+    ctx.fillStyle='#f8ff74';
+    bullets.forEach(b=>ctx.fillRect(b.x,b.y,b.w,b.h));
+    ctx.fillStyle='#ff6b78';
+    enemyBullets.forEach(b=>ctx.fillRect(b.x,b.y,b.w,b.h));
+
+    // UFO
+    if(ufo){
+      ctx.fillStyle='#ff4fd8';
+      ctx.fillRect(ufo.x+10,ufo.y,ufo.w-20,4);
+      ctx.fillRect(ufo.x+4,ufo.y+4,ufo.w-8,6);
+      ctx.fillRect(ufo.x,ufo.y+10,ufo.w,5);
+      ctx.fillStyle='#fff';
+      ctx.fillRect(ufo.x+10,ufo.y+7,5,3);
+      ctx.fillRect(ufo.x+ufo.w-15,ufo.y+7,5,3);
+    }
+
+    // invaders
+    invaders.forEach(i=>{
+      if(!i.alive) return;
+      ctx.fillStyle = i.row%3===0 ? '#9b8cff' : i.row%3===1 ? '#58d7ff' : '#ff9b54';
+      const x=i.x,y=i.y,w=i.w,h=i.h;
+      ctx.fillRect(x+6,y,w-12,4);
+      ctx.fillRect(x+2,y+4,w-4,12);
+      ctx.fillRect(x,y+8,4,8);
+      ctx.fillRect(x+w-4,y+8,4,8);
+      ctx.fillStyle='#05070d';
+      ctx.fillRect(x+8,y+8,4,4);
+      ctx.fillRect(x+w-12,y+8,4,4);
+      ctx.fillStyle='#fff';
+      ctx.fillRect(x+4,y+h-4,6,4);
+      ctx.fillRect(x+w-10,y+h-4,6,4);
+    });
+
+    if(bonusDanceActive){
       ctx.fillStyle='rgba(0,0,0,.42)';
       ctx.fillRect(0,0,W,H);
       ctx.textAlign='center';
@@ -297,7 +579,7 @@
       ctx.font='700 15px -apple-system,BlinkMacSystemFont,sans-serif';
       ctx.fillText('踊るイカを撃て！ 1匹 +25点',W/2,H*.17);
       ctx.fillText('HIT '+bonusHits+'   残り '+Math.max(0,bonusDanceTimer).toFixed(1)+'秒',W/2,H*.21);
-      danceSquids.forEach(q=>{ if(q.alive) drawSquid(q.x,q.y,q.size,q.phase); });
+      danceSquids.forEach(q=>{if(q.alive) drawSquid(q.x,q.y,q.size,q.phase);});
       ctx.textAlign='start';
     }
 
